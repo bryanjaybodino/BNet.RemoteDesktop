@@ -1,4 +1,5 @@
-﻿using System;
+﻿using BNet.RemoteDesktop.Controllers;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,6 +17,7 @@ namespace BNet.RemoteDesktop
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            ScreenScale.InitDpiAwareness();
             Application.Run(new RemoteDeskHome());
         }
     }
