@@ -491,11 +491,19 @@ namespace BNet.RemoteDesktop.Repositories
                     if (client == null || !client.Connected || _netStream == null) continue;
 
                     bool force = _forceClipboardSend;
-                    _forceClipboardSend = false;
                     if (!force && !_clipBaseline && !AutoSyncClipboard) continue;
 
                     string[] files; string text;
-                    ReadLocalClipboard(out files, out text);
+                    try
+                    {
+                        ReadLocalClipboard(out files, out text);
+                    }
+                    catch
+                    {
+                        // clipboard busy: keep the force request (if any) and retry on the next tick
+                        continue;
+                    }
+                    _forceClipboardSend = false;
                     string fileSig = files != null ? string.Join("|", files) : "";
 
                     // right after connecting: remember what is already on the clipboard, don't send it
@@ -518,9 +526,15 @@ namespace BNet.RemoteDesktop.Repositories
                     else if (!string.IsNullOrEmpty(text))
                     {
                         if (!force && text == _lastTextSig) continue;
-                        _lastTextSig = text;
-                        _lastFileSig = "";
-                        SendClipboardText(text);
+                        if (SendClipboardText(text))
+                        {
+                            _lastTextSig = text;
+                            _lastFileSig = "";
+                        }
+                        else if (force)
+                        {
+                            _forceClipboardSend = true; // send failed: retry on the next tick
+                        }
                     }
                     else
                     {
@@ -553,13 +567,13 @@ namespace BNet.RemoteDesktop.Repositories
                 text = data.GetData(DataFormats.UnicodeText) as string;
         }
 
-        private void SendClipboardText(string text)
+        private bool SendClipboardText(string text)
         {
             var stream = _netStream;
-            if (stream == null || _client == null || !_client.Connected) return;
+            if (stream == null || _client == null || !_client.Connected) return false;
 
             byte[] bytes = Encoding.UTF8.GetBytes(text);
-            if (bytes.Length > MaxClipboardTextBytes) return;
+            if (bytes.Length > MaxClipboardTextBytes) return true; // too big: nothing to retry
 
             try
             {
@@ -571,8 +585,9 @@ namespace BNet.RemoteDesktop.Repositories
                     w.Write(bytes);
                     w.Flush();
                 }
+                return true;
             }
-            catch { }
+            catch { return false; }
         }
 
         private void ApplyRemoteText(string text)
@@ -582,8 +597,15 @@ namespace BNet.RemoteDesktop.Repositories
             _lastFileSig = "";
             RunOnUi(() =>
             {
-                try { Clipboard.SetDataObject(new DataObject(DataFormats.UnicodeText, text), true, 10, 50); }
-                catch { }
+                for (int attempt = 0; attempt < 10; attempt++)
+                {
+                    try
+                    {
+                        Clipboard.SetDataObject(new DataObject(DataFormats.UnicodeText, text), true, 10, 50);
+                        return;
+                    }
+                    catch { Thread.Sleep(100); } // clipboard locked by another app: retry
+                }
             });
         }
 
